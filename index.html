@@ -1,0 +1,257 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>Pemindai QR Presensi</title>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #eef3f8;
+    padding: 15px;
+    text-align: center;
+  }
+
+  .box {
+    max-width: 600px;
+    margin: auto;
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+  }
+
+  #reader {
+    width: 100%;
+    margin: 15px auto;
+  }
+
+  button, select {
+    width: 100%;
+    padding: 13px;
+    margin-top: 10px;
+    border-radius: 7px;
+    font-size: 15px;
+  }
+
+  button {
+    border: none;
+    background: #1769aa;
+    color: white;
+    cursor: pointer;
+  }
+
+  #hasil {
+    padding: 14px;
+    background: #edf3f8;
+    margin-top: 15px;
+    border-radius: 8px;
+    white-space: pre-line;
+  }
+</style>
+</head>
+
+<body>
+
+<div class="box">
+
+  <h2>PEMINDAI QR PRESENSI</h2>
+
+  <p>Silakan arahkan QR Code ke kamera.</p>
+
+  <select id="daftarKamera">
+    <option value="">Memeriksa kamera...</option>
+  </select>
+
+  <button onclick="mulaiKamera()">MULAI KAMERA</button>
+
+  <button onclick="hentikanKamera()">HENTIKAN KAMERA</button>
+
+  <div id="reader"></div>
+
+  <div id="hasil">Menunggu koneksi aplikasi utama.</div>
+
+</div>
+
+<script>
+  const ASAL_APLIKASI =
+    "https://script.google.com";
+
+  let kamera = null;
+  let kameraAktif = false;
+  let idSesi = "";
+  let sedangMengirim = false;
+
+  function tampilkan(pesan) {
+    document.getElementById("hasil").textContent = pesan;
+  }
+
+  // Menerima pesan dari halaman Apps Script.
+  window.addEventListener("message", function(event) {
+
+    if (event.origin !== ASAL_APLIKASI) return;
+
+    const data = event.data;
+
+    if (!data) return;
+
+    if (data.tipe === "MULAI_SESI") {
+      idSesi = data.idSesi;
+
+      tampilkan(
+        "SESI AKTIF\n" +
+        "ID: " + idSesi +
+        "\nSilakan mulai pemindaian."
+      );
+    }
+
+  });
+
+  // Memberi tahu halaman utama bahwa pemindai siap.
+  if (window.parent !== window) {
+    window.parent.postMessage(
+      { tipe: "SCANNER_SIAP" },
+      ASAL_APLIKASI
+    );
+  }
+
+  async function tampilkanDaftarKamera() {
+
+    try {
+      const daftar = await Html5Qrcode.getCameras();
+      const pilihan = document.getElementById("daftarKamera");
+
+      pilihan.innerHTML = "";
+
+      if (!daftar.length) {
+        tampilkan("Tidak ada kamera yang terdeteksi.");
+        return;
+      }
+
+      daftar.forEach((item, index) => {
+        const opsi = document.createElement("option");
+
+        opsi.value = item.id;
+        opsi.textContent =
+          item.label || "Kamera " + (index + 1);
+
+        pilihan.appendChild(opsi);
+      });
+
+      tampilkan(
+        "Kamera ditemukan: " + daftar.length +
+        "\nPilih kamera lalu klik MULAI KAMERA."
+      );
+
+    } catch (error) {
+      tampilkan(
+        "Gagal membaca daftar kamera: " + error.message
+      );
+    }
+  }
+
+  async function mulaiKamera() {
+
+    if (!idSesi) {
+      tampilkan(
+        "Belum ada sesi aktif. Buka sesi dari aplikasi utama."
+      );
+      return;
+    }
+
+    if (kameraAktif) return;
+
+    try {
+
+      kamera = new Html5Qrcode("reader");
+
+      const idKamera =
+        document.getElementById("daftarKamera").value;
+
+      if (!idKamera) {
+        throw new Error("Pilih kamera terlebih dahulu.");
+      }
+
+      await kamera.start(
+        idKamera,
+        {
+          fps: 10,
+          qrbox: { width: 250, height: 250 }
+        },
+
+        function(teks) {
+
+          if (sedangMengirim) return;
+
+          sedangMengirim = true;
+
+          tampilkan("QR TERBACA: " + teks);
+
+          if (window.parent !== window) {
+            window.parent.postMessage(
+              {
+                tipe: "HASIL_QR",
+                qrId: teks
+              },
+              ASAL_APLIKASI
+            );
+          }
+
+          setTimeout(function() {
+            sedangMengirim = false;
+          }, 1800);
+
+        },
+
+        function() {
+          // QR belum terbaca. Kamera tetap melakukan pemindaian.
+        }
+      );
+
+      kameraAktif = true;
+
+      tampilkan("KAMERA AKTIF. Arahkan QR ke kotak pemindaian.");
+
+    } catch (error) {
+
+      kameraAktif = false;
+
+      tampilkan(
+        "KAMERA GAGAL DIAKTIFKAN\n" +
+        error.name + "\n" +
+        error.message
+      );
+
+      alert("Periksa izin kamera dan pilihan perangkat.");
+    }
+  }
+
+  async function hentikanKamera() {
+
+    if (!kamera || !kameraAktif) return;
+
+    try {
+      await kamera.stop();
+      await kamera.clear();
+
+      kameraAktif = false;
+
+      tampilkan("Kamera berhasil dihentikan.");
+
+    } catch (error) {
+      tampilkan("Gagal menghentikan kamera: " + error.message);
+    }
+  }
+
+  window.addEventListener("load", function() {
+    tampilkanDaftarKamera();
+  });
+
+</script>
+
+</body>
+</html>
